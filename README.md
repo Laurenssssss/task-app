@@ -1,3 +1,4 @@
+# Task-App für das Terminal auf MacOS #
 ![Vorschau der Task App](Task-Foto.png)
 
 ## Features
@@ -5,6 +6,7 @@
 - Speichern der Tasks in einer JSON-Datei
 - Übersichtliche Konsolenausgabe
 - Timer integriert für Konzentriertes Arbeiten (Fokusmodus)
+- Funktion für den Export zum Kalender hinzugefügt
 
 ## Installation und Ausführung
 1. Stelle sicher, dass **Python** installiert ist.
