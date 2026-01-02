@@ -4,16 +4,29 @@ import os
 import sys
 import argparse
 import time
+import uuid  # NEU: Für eindeutige IDs im Kalender
 from datetime import datetime, date
 
 # Auf Unix-Systemen brauchen wir select für den Timer
 if os.name != 'nt':
     import select
+else:
+    import ctypes
 
 # --- KONFIGURATION & KONSTANTEN ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, "tasks.json")
-LOG_FILE = os.path.join(BASE_DIR, "done_log.txt") 
+LOG_FILE = os.path.join(BASE_DIR, "done_log.txt")
+ICAL_FILE = os.path.join(BASE_DIR, "tasks.ics") # NEU: Ausgabedatei
+
+# NEU: Funktion, die Windows zwingt, Farben anzuzeigen
+def enable_windows_ansi_support():
+    if os.name == 'nt':
+        try:
+            kernel32 = ctypes.windll.kernel32
+            kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+        except Exception:
+            pass
 
 class Colors:
     HEADER = '\033[95m'
@@ -34,13 +47,8 @@ class Colors:
 # --- HELPER FUNCTIONS ---
 
 def parse_german_date(date_str):
-    """
-    Konvertiert deutsche Eingaben in ISO-Format für die Datenbank.
-    Erlaubt: '24.12' (aktuelles Jahr) oder '24.12.2025'
-    Rückgabe: '2025-12-24' (String) oder None
-    """
+    """Konvertiert deutsche Eingaben in ISO-Format für die Datenbank."""
     if not date_str: return None
-    # Falls es schon ISO format ist (YYYY-MM-DD), direkt zurückgeben
     if "-" in date_str and date_str.count("-") == 2:
         try:
             datetime.strptime(date_str, "%Y-%m-%d")
@@ -55,20 +63,14 @@ def parse_german_date(date_str):
         
         if len(parts) == 2: # Format: DD.MM
             day, month = int(parts[0]), int(parts[1])
-            
-            # GEÄNDERTE LOGIK:
-            # Wenn Monat und Tag vor dem heutigen Datum liegen,
-            # muss es im nächsten Jahr sein.
             if (month, day) < (today.month, today.day):
                 year += 1
-                
         elif len(parts) == 3: # Format: DD.MM.YYYY
             day, month = int(parts[0]), int(parts[1])
             year_in = int(parts[2])
-            # Ergänze 2-stellige Jahreszahlen (z.B. 25 -> 2025)
             year = year_in + 2000 if year_in < 100 else year_in
         else:
-            return None # Falsches Format
+            return None
             
         return date(year, month, day).strftime("%Y-%m-%d")
     except (ValueError, IndexError):
@@ -97,6 +99,9 @@ def send_notification(title, message):
         os.system(f"""osascript -e 'display notification "{safe_msg}" with title "{safe_title}" sound name "Glass"'""")
     elif sys.platform.startswith('linux'): # Linux
         os.system(f'notify-send "{title}" "{message}"')
+    elif os.name == 'nt': # Windows Beep
+        import winsound
+        winsound.MessageBeep()
 
 # --- INPUT HANDLING (NON-BLOCKING) ---
 class InputHandler:
@@ -143,6 +148,7 @@ class InputHandler:
 # --- CONTEXT MANAGER ---
 class AppWindow:
     def __enter__(self):
+        enable_windows_ansi_support()
         sys.stdout.write(Colors.ALT_SCREEN_ENTER)
         sys.stdout.write(Colors.HIDE_CURSOR)
         sys.stdout.flush()
@@ -159,9 +165,6 @@ class TodoApp:
         self.tasks = self.load_tasks()
         self.input = InputHandler()
         
-        # --- AUTO-REPAIR ---
-        # Überprüft beim Start, ob alte Datumsformate (mit Punkt) existieren
-        # und wandelt sie in ISO um.
         if self.sanitize_legacy_dates():
             self.save_tasks()
             
@@ -180,11 +183,9 @@ class TodoApp:
         except: return []
 
     def sanitize_legacy_dates(self):
-        """Repariert alte Einträge, die noch als 'DD.MM.YYYY' gespeichert sind"""
         dirty = False
         for task in self.tasks:
             d = task.get('due')
-            # Wenn ein Datum existiert und einen Punkt enthält, ist es das falsche Format
             if d and isinstance(d, str) and '.' in d:
                 clean_date = parse_german_date(d)
                 if clean_date:
@@ -196,6 +197,50 @@ class TodoApp:
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(self.tasks, f, indent=4)
 
+    # --- NEU: ICAL EXPORT ---
+    def export_ical(self):
+        """Generiert eine .ics Datei für Kalender-Import"""
+        try:
+            with open(ICAL_FILE, 'w', encoding='utf-8') as f:
+                f.write("BEGIN:VCALENDAR\n")
+                f.write("VERSION:2.0\n")
+                f.write("PRODID:-//TerminalTodo//DE\n")
+                
+                count = 0
+                now_stamp = datetime.now().strftime("%Y%m%dT%H%M%SZ")
+                
+                for task in self.tasks:
+                    due = task.get('due')
+                    if not due: continue # Nur Tasks mit Datum exportieren
+                    
+                    # Datum von YYYY-MM-DD zu YYYYMMDD wandeln
+                    dtstart = due.replace("-", "")
+                    
+                    status = "COMPLETED" if task['done'] else "CONFIRMED"
+                    
+                    f.write("BEGIN:VEVENT\n")
+                    f.write(f"UID:{uuid.uuid4()}\n")
+                    f.write(f"DTSTAMP:{now_stamp}\n")
+                    f.write(f"DTSTART;VALUE=DATE:{dtstart}\n")
+                    f.write(f"SUMMARY:{task['title']}\n")
+                    f.write(f"STATUS:{status}\n")
+                    f.write("END:VEVENT\n")
+                    count += 1
+                
+                f.write("END:VCALENDAR\n")
+            
+            # Kurzes Feedback in der TUI (hacky aber effektiv)
+            sys.stdout.write(Colors.SHOW_CURSOR)
+            self.clear_screen()
+            print(f"\n\n  {Colors.GREEN}Export erfolgreich!{Colors.ENDC}")
+            print(f"  {count} Aufgaben exportiert nach:")
+            print(f"  {Colors.BOLD}{ICAL_FILE}{Colors.ENDC}")
+            time.sleep(1.5)
+            sys.stdout.write(Colors.HIDE_CURSOR)
+            
+        except Exception as e:
+            pass
+
     def log_done_task(self, task):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         try:
@@ -204,10 +249,6 @@ class TodoApp:
         except: pass
 
     def sort_tasks(self):
-        # Sortierlogik:
-        # 1. Erledigt? (False vor True)
-        # 2. Datum (ISO-String sortiert sich korrekt: 2025 kommt vor 2026)
-        # 3. Priorität (Höchste zuerst)
         self.tasks.sort(key=lambda x: (
             x['done'], 
             x['due'] if x['due'] else "9999-12-31", 
@@ -220,7 +261,10 @@ class TodoApp:
         return (done_count / len(self.tasks)), done_count
 
     def clear_screen(self):
-        sys.stdout.write('\033[2J\033[H')
+        if os.name == 'nt':
+            os.system('cls')
+        else:
+            sys.stdout.write('\033[2J\033[H')
 
     def draw_ui(self):
         self.clear_screen()
@@ -251,9 +295,9 @@ class TodoApp:
 
         print("\n" + "-" * 50)
         print(f"{Colors.BOLD}Steuerung:{Colors.ENDC} [↑/↓] Nav | [Space] Toggle | [F]ocus")
-        print(f"           [A]dd   | [E]dit  | [D]elete | [1-3] Prio")
+        # NEU: [X]port in der UI anzeigen
+        print(f"           [A]dd   | [E]dit  | [D]elete | [X]port")
 
-    # --- FOCUS MODE ---
     def run_focus_mode(self):
         if not self.tasks: return
         task = self.tasks[self.selected_idx]
@@ -299,12 +343,9 @@ class TodoApp:
                 send_notification("Focus beendet!", f"Gut gemacht: {title}")
                 
                 for _ in range(3):
-                    sys.stdout.write('\033[?5h') 
-                    sys.stdout.flush()
+                    print('\033[?5h', end='', flush=True) 
                     time.sleep(0.3)
-                    
-                    sys.stdout.write('\033[?5l') 
-                    sys.stdout.flush()
+                    print('\033[?5l', end='', flush=True) 
                     time.sleep(0.3)
                 
                 print('\a')
@@ -314,7 +355,6 @@ class TodoApp:
                 self.input.get_key() 
                 break
 
-    # --- ACTIONS ---
     def _prompt(self, text):
         sys.stdout.write(Colors.SHOW_CURSOR)
         print(f"\n{Colors.BLUE}{text}{Colors.ENDC}", end=" ")
@@ -343,14 +383,11 @@ class TodoApp:
     def action_delete(self):
         if not self.tasks: return
         task = self.tasks[self.selected_idx]
-        
         self.log_done_task(task)
-        
         self.tasks.pop(self.selected_idx)
         self.save_tasks()
         self.selected_idx = max(0, min(self.selected_idx, len(self.tasks)-1))
 
-    # --- MAIN LOOP ---
     def run_tui(self):
         with AppWindow():
             while True:
@@ -379,9 +416,12 @@ class TodoApp:
                 elif key == 'a': self.action_add()
                 elif key == 'e': self.action_edit()
                 elif key == 'd': self.action_delete()
+                # NEU: Export auf Taste 'x'
+                elif key == 'x': self.export_ical()
                 elif key in ('q', '\x1b'): break
 
     def run_cli_add(self, title, prio, due_input):
+        enable_windows_ansi_support()
         due = parse_german_date(due_input)
         self.tasks.append({"title": title, "done": False, "priority": prio, "due": due})
         self.sort_tasks()
@@ -389,6 +429,7 @@ class TodoApp:
         print(f"{Colors.GREEN}Task '{title}' gespeichert (Fällig: {due if due else 'Nie'}).{Colors.ENDC}")
     
     def run_list_short(self):
+        enable_windows_ansi_support()
         open_tasks = [t for t in self.tasks if not t['done']]
 
         if not open_tasks:
