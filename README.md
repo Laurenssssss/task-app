@@ -7,8 +7,9 @@
 - Übersichtliche Konsolenausgabe
 - Timer integriert für Konzentriertes Arbeiten (Fokusmodus)
 - Funktion für den Export zum Kalender hinzugefügt
-- Man kann jetzt mehrere Listen gleichzeitig haben (für unterschiedliche Arbeitsumgebungen)
-  -> (Modus für Listen Steuerung wird noch verbessert)
+
+## Geplante Features
+- Umgebung für mehrere Listen
 
 ## Installation und Ausführung
 1. Stelle sicher, dass **Python** installiert ist.

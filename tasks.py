@@ -81,21 +81,32 @@ def format_due_date(date_str):
         else: return f"{Colors.BLUE}{due_date.strftime('%d.%m.%Y')}{Colors.ENDC}"
     except ValueError: return date_str
 
+# UPDATE: Flexiblere Berechnung (z.B. "3d" oder "2w")
 def calculate_next_date(date_str, recurrence):
     if not date_str or not recurrence: return None
     try:
         current_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        
+        # Parse recurrence String (letztes Zeichen ist Einheit)
         unit = recurrence[-1].lower()
         val_str = recurrence[:-1]
         
-        if not val_str: val = 1
+        # Fallback wenn keine Zahl angegeben wurde (z.B. nur "d")
+        if not val_str:
+            val = 1
         else:
-            try: val = int(val_str)
-            except ValueError: val = 1
+            try:
+                val = int(val_str)
+            except ValueError:
+                val = 1
 
-        if unit == 'd': new_date = current_date + timedelta(days=val)
-        elif unit == 'w': new_date = current_date + timedelta(weeks=val)
-        else: return None
+        if unit == 'd':
+            new_date = current_date + timedelta(days=val)
+        elif unit == 'w':
+            new_date = current_date + timedelta(weeks=val)
+        else:
+            return None
+            
         return new_date.strftime("%Y-%m-%d")
     except: return None
     
@@ -173,11 +184,7 @@ class TodoApp:
         self.input = InputHandler()
         self.last_deleted = None
         
-        # NEU: Aktive Liste
-        self.current_list = "Allgemein" 
-        
-        # Migration alter Daten (Feld "list" hinzufügen)
-        if self.sanitize_tasks():
+        if self.sanitize_legacy_dates():
             self.save_tasks()
             
         self.selected_idx = 0
@@ -187,48 +194,28 @@ class TodoApp:
         if not os.path.exists(DATA_FILE): return []
         try:
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                for task in data:
+                    if 'priority' not in task: task['priority'] = 1
+                    if 'due' not in task: task['due'] = None
+                    if 'recurrence' not in task: task['recurrence'] = None 
+                return data
         except: return []
 
-    def sanitize_tasks(self):
-        """Stellt sicher, dass alle Tasks ein 'list' Attribut haben"""
+    def sanitize_legacy_dates(self):
         dirty = False
         for task in self.tasks:
-            # Migration Datumsformat
             d = task.get('due')
             if d and isinstance(d, str) and '.' in d:
-                clean = parse_german_date(d)
-                if clean:
-                    task['due'] = clean
+                clean_date = parse_german_date(d)
+                if clean_date:
+                    task['due'] = clean_date
                     dirty = True
-            
-            # Migration Liste
-            if 'list' not in task:
-                task['list'] = "Allgemein"
-                dirty = True
-            
-            if 'priority' not in task: task['priority'] = 1
-            if 'recurrence' not in task: task['recurrence'] = None
-            
         return dirty
 
     def save_tasks(self):
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(self.tasks, f, indent=4)
-
-    # --- LIST MANAGEMENT HELPER ---
-    
-    def get_visible_tasks(self):
-        """Gibt nur Tasks der aktuellen Liste zurück"""
-        return [t for t in self.tasks if t.get('list') == self.current_list]
-
-    def get_all_list_names(self):
-        """Sammelt alle einzigartigen Listennamen"""
-        names = set(t.get('list', 'Allgemein') for t in self.tasks)
-        names.add(self.current_list) # Aktuelle Liste immer dazu, auch wenn leer
-        return sorted(list(names))
-
-    # --- EXPORT ---
 
     def export_ical(self):
         try:
@@ -236,8 +223,6 @@ class TodoApp:
                 f.write("BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//TerminalTodo//DE\n")
                 count = 0
                 now_stamp = datetime.now().strftime("%Y%m%dT%H%M%SZ")
-                # Exportiere nur Tasks der aktuellen Liste oder alle? 
-                # -> Hier: ALLE exportieren ist sinnvoller für Kalender
                 for task in self.tasks:
                     due = task.get('due')
                     if not due: continue
@@ -245,7 +230,7 @@ class TodoApp:
                     status = "COMPLETED" if task['done'] else "CONFIRMED"
                     f.write("BEGIN:VEVENT\n")
                     f.write(f"UID:{uuid.uuid4()}\nDTSTAMP:{now_stamp}\n")
-                    f.write(f"DTSTART;VALUE=DATE:{dtstart}\nSUMMARY:{task['title']} ({task.get('list')})\n")
+                    f.write(f"DTSTART;VALUE=DATE:{dtstart}\nSUMMARY:{task['title']}\n")
                     f.write(f"STATUS:{status}\nEND:VEVENT\n")
                     count += 1
                 f.write("END:VCALENDAR\n")
@@ -258,11 +243,11 @@ class TodoApp:
             sys.stdout.write(Colors.HIDE_CURSOR)
         except Exception: pass
 
-    # --- LOGGING ---
+    # --- LOGGING FUNKTIONEN ---
     def log_done_task(self, task):
         try:
             with open(LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] [{task.get('list')}] {task['title']}\n")
+                f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] {task['title']}\n")
         except: pass
 
     def remove_log_entry(self, task):
@@ -285,10 +270,9 @@ class TodoApp:
         ))
 
     def get_progress(self):
-        visible = self.get_visible_tasks()
-        if not visible: return 0.0, 0
-        done_count = sum(1 for t in visible if t['done'])
-        return (done_count / len(visible)), done_count
+        if not self.tasks: return 0.0, 0
+        done_count = sum(1 for t in self.tasks if t['done'])
+        return (done_count / len(self.tasks)), done_count
 
     def clear_screen(self):
         if os.name == 'nt': os.system('cls')
@@ -296,11 +280,8 @@ class TodoApp:
 
     def draw_ui(self):
         self.clear_screen()
-        
-        # Header mit Listenname
-        list_display = f"LISTE: {self.current_list.upper()}"
         print(f"{Colors.BLUE}╔{'═'*48}╗{Colors.ENDC}")
-        print(f"{Colors.BLUE}║ {Colors.BOLD}{list_display:<46}{Colors.ENDC} {Colors.BLUE}║{Colors.ENDC}")
+        print(f"{Colors.BLUE}║       {Colors.BOLD}TERMINAL PRODUKTIVITÄT{Colors.ENDC}{Colors.BLUE}               ║{Colors.ENDC}")
         print(f"{Colors.BLUE}╚{'═'*48}╝{Colors.ENDC}")
         
         percent, done_count = self.get_progress()
@@ -312,41 +293,34 @@ class TodoApp:
 
         print(f"\n{Colors.UNDERLINE}Deine Aufgaben:{Colors.ENDC}\n")
 
-        visible_tasks = self.get_visible_tasks()
-
-        if not visible_tasks:
-            print(f"  {Colors.WARNING}(Liste '{self.current_list}' ist leer){Colors.ENDC}")
-            print(f"  {Colors.BLUE}Drücke 'a' zum Hinzufügen{Colors.ENDC}")
+        if not self.tasks:
+            print(f"  {Colors.WARNING}(Liste ist leer - Drücke 'a'){Colors.ENDC}")
+            if self.last_deleted:
+                print(f"  {Colors.BLUE}(Undo mit 'u' möglich){Colors.ENDC}")
         else:
-            for i, task in enumerate(visible_tasks):
+            for i, task in enumerate(self.tasks):
                 checkbox = f"{Colors.GREEN}[✔]{Colors.ENDC}" if task['done'] else f"{Colors.FAIL}[ ]{Colors.ENDC}"
                 p = task.get('priority', 1)
                 p_str = f"{Colors.FAIL}!!!{Colors.ENDC}" if p==3 else (f"{Colors.WARNING} !!{Colors.ENDC}" if p==2 else "   ")
-                
-                # Highlight selection
-                if i == self.selected_idx:
-                    prefix = f"{Colors.BLUE}>>{Colors.ENDC}"
-                    l_col = Colors.REVERSE
-                else:
-                    prefix = "  "
-                    l_col = ""
-                
+                prefix = f"{Colors.BLUE}>>{Colors.ENDC}" if i == self.selected_idx else "  "
+                l_col = Colors.REVERSE if i == self.selected_idx else ""
                 due_str = format_due_date(task.get('due'))
+                
+                # UPDATE: Anzeige für Wiederholung (z.B. "⟳ 3d")
                 rec = task.get('recurrence')
-                rec_str = f"{Colors.BLUE} ⟳ {rec}{Colors.ENDC}" if rec else ""
+                rec_str = ""
+                if rec:
+                   rec_str = f"{Colors.BLUE} ⟳ {rec}{Colors.ENDC}"
                 
                 print(f"{prefix} {checkbox} {l_col} {p_str} {task['title']:<25} {due_str}{rec_str} {Colors.ENDC}")
 
         print("\n" + "-" * 50)
-        print(f"{Colors.BOLD}Steuerung:{Colors.ENDC} [↑/↓] Nav | [Space] Done | [F]ocus")
-        # Neue Steuerung
-        print(f"           [L]iste | [A]dd  | [D]el  | [U]ndo")
+        print(f"{Colors.BOLD}Steuerung:{Colors.ENDC} [↑/↓] Nav | [Space] Toggle | [F]ocus")
+        print(f"           [A]dd   | [D]el | [U]ndo | [X]port")
 
     def run_focus_mode(self):
-        visible = self.get_visible_tasks()
-        if not visible: return
-        task = visible[self.selected_idx]
-        
+        if not self.tasks: return
+        task = self.tasks[self.selected_idx]
         sys.stdout.write(Colors.SHOW_CURSOR)
         self.clear_screen()
         print(f"\n{Colors.BLUE}Focus Modus für: {Colors.BOLD}{task['title']}{Colors.ENDC}")
@@ -395,105 +369,44 @@ class TodoApp:
         sys.stdout.write(Colors.HIDE_CURSOR)
         return val
 
-    # --- ACTION HANDLERS ---
-
-    def action_manage_lists(self):
-        """Menü zum Wechseln/Erstellen/Löschen von Listen"""
-        while True:
-            self.clear_screen()
-            all_lists = self.get_all_list_names()
-            print(f"{Colors.BOLD}LISTEN VERWALTUNG{Colors.ENDC}\n")
-            print(f"Aktuelle Liste: {Colors.GREEN}{self.current_list}{Colors.ENDC}\n")
-            
-            print("Verfügbare Listen:")
-            for l_name in all_lists:
-                prefix = " >" if l_name == self.current_list else "  "
-                count = sum(1 for t in self.tasks if t.get('list') == l_name)
-                print(f"{prefix} {l_name:<20} ({count} Tasks)")
-                
-            print("\n[W]echseln/Neu | [U]mbenennen | [L]öschen | [Esc] Zurück")
-            
-            key = self.input.get_key()
-            if key == 'esc' or key == 'q':
-                break
-            
-            elif key == 'w': # Wechseln / Erstellen
-                name = self._prompt("Name der Liste (neu oder vorhanden):")
-                if name:
-                    self.current_list = name
-                    self.selected_idx = 0 # Reset Index
-                    return # Zurück zur Main UI
-
-            elif key == 'u': # Umbenennen
-                new_name = self._prompt(f"Liste '{self.current_list}' umbenennen in:")
-                if new_name and new_name != self.current_list:
-                    # Alle Tasks der aktuellen Liste updaten
-                    for t in self.tasks:
-                        if t.get('list') == self.current_list:
-                            t['list'] = new_name
-                    self.current_list = new_name
-                    self.save_tasks()
-
-            elif key == 'l': # Löschen
-                confirm = self._prompt(f"Liste '{self.current_list}' und ALLE Tasks löschen? (y/n):")
-                if confirm.lower() == 'y':
-                    # Tasks filtern (nur die behalten, die NICHT in der aktuellen Liste sind)
-                    self.tasks = [t for t in self.tasks if t.get('list') != self.current_list]
-                    self.current_list = "Allgemein" # Fallback
-                    self.selected_idx = 0
-                    self.save_tasks()
-                    return
-
     def action_add(self):
         title = self._prompt("Titel:")
         if title:
             due = parse_german_date(self._prompt("Fällig (DD.MM oder DD.MM.YYYY) [Enter=Nie]:"))
+            
+            # UPDATE: Neue Abfrage
             rec_in = self._prompt("Wiederholung (z.B. '1d', '3d', '1w') [Enter=Nein]:").lower()
             recurrence = None
+            
+            # Einfacher Check: Endet es auf d oder w?
             if rec_in and (rec_in.endswith('d') or rec_in.endswith('w')):
                 recurrence = rec_in
-            elif rec_in == 't': recurrence = '1d'
-
-            # NEU: Liste speichern
+            elif rec_in == 't': recurrence = '1d' # Support für alte Eingabe
+            
             self.tasks.append({
                 "title": title, 
                 "done": False, 
                 "priority": 1, 
                 "due": due,
-                "recurrence": recurrence,
-                "list": self.current_list
+                "recurrence": recurrence
             })
             self.sort_tasks(); self.save_tasks()
 
     def action_edit(self):
-        visible = self.get_visible_tasks()
-        if not visible: return
-        # Achtung: Wir müssen das originale Task-Objekt in self.tasks finden
-        current_view_task = visible[self.selected_idx]
-        
-        # Referenz finden
-        real_task = next((t for t in self.tasks if t is current_view_task), None)
-        if real_task:
-            new_t = self._prompt(f"Neuer Titel ({real_task['title']}):")
-            if new_t:
-                real_task['title'] = new_t
-                self.save_tasks()
+        if not self.tasks: return
+        new_t = self._prompt(f"Neuer Titel ({self.tasks[self.selected_idx]['title']}):")
+        if new_t:
+            self.tasks[self.selected_idx]['title'] = new_t
+            self.save_tasks()
 
     def action_delete(self):
-        visible = self.get_visible_tasks()
-        if not visible: return
-        current_view_task = visible[self.selected_idx]
-        
-        # In self.tasks finden und entfernen
-        if current_view_task in self.tasks:
-            self.last_deleted = current_view_task
-            self.log_done_task(current_view_task)
-            self.tasks.remove(current_view_task)
-            self.save_tasks()
-            
-            # Index korrigieren
-            new_len = len(self.get_visible_tasks())
-            self.selected_idx = max(0, min(self.selected_idx, new_len - 1))
+        if not self.tasks: return
+        task = self.tasks[self.selected_idx]
+        self.last_deleted = task
+        self.log_done_task(task)
+        self.tasks.pop(self.selected_idx)
+        self.save_tasks()
+        self.selected_idx = max(0, min(self.selected_idx, len(self.tasks)-1))
 
     def action_undo(self):
         if self.last_deleted:
@@ -510,31 +423,22 @@ class TodoApp:
     def run_tui(self):
         with AppWindow():
             while True:
-                visible = self.get_visible_tasks()
-                if visible: 
-                    self.selected_idx = max(0, min(self.selected_idx, len(visible)-1))
-                else:
-                    self.selected_idx = 0
-
+                if self.tasks: self.selected_idx = max(0, min(self.selected_idx, len(self.tasks)-1))
                 self.draw_ui()
                 key = self.input.get_key()
 
                 if key in ('up', 'k') and self.selected_idx > 0: self.selected_idx -= 1
-                elif key in ('down', 'j') and self.selected_idx < len(visible)-1: self.selected_idx += 1
-                
-                elif key in (' ', 't') and visible:
-                    task = visible[self.selected_idx]
+                elif key in ('down', 'j') and self.selected_idx < len(self.tasks)-1: self.selected_idx += 1
+                elif key in (' ', 't') and self.tasks:
+                    task = self.tasks[self.selected_idx]
                     task['done'] = not task['done']
                     
-                    # Wiederholung Logic
                     if task['done'] and task.get('recurrence') and task.get('due'):
                         new_due = calculate_next_date(task['due'], task['recurrence'])
                         if new_due:
                             new_task = task.copy()
                             new_task['done'] = False
                             new_task['due'] = new_due
-                            # WICHTIG: UUID oder Referenz lösen, hier Copy -> OK. 
-                            # Liste wird automatisch mitkopiert.
                             self.tasks.append(new_task)
                             sys.stdout.write(Colors.SHOW_CURSOR)
                             print(f"\n  {Colors.GREEN}Neue Aufgabe für {new_due} erstellt!{Colors.ENDC}")
@@ -542,35 +446,21 @@ class TodoApp:
                             sys.stdout.write(Colors.HIDE_CURSOR)
 
                     self.sort_tasks(); self.save_tasks()
-                    
-                elif key in ('1', '2', '3') and visible:
-                    visible[self.selected_idx]['priority'] = int(key)
+                elif key in ('1', '2', '3') and self.tasks:
+                    self.tasks[self.selected_idx]['priority'] = int(key)
                     self.sort_tasks(); self.save_tasks()
-                    
                 elif key == 'f': self.run_focus_mode()
                 elif key == 'a': self.action_add()
                 elif key == 'e': self.action_edit()
                 elif key == 'd': self.action_delete()
                 elif key == 'x': self.export_ical()
                 elif key == 'u': self.action_undo()
-                # NEU: List Management
-                elif key == 'l': self.action_manage_lists()
-                
                 elif key in ('q', '\x1b'): break
 
     def run_cli_add(self, title, prio, due_input):
         enable_windows_ansi_support()
         due = parse_german_date(due_input)
-        # CLI fügt standardmäßig zu "Allgemein" hinzu, außer wir bauen Argumente dafür.
-        # Hier simpel halten:
-        self.tasks.append({
-            "title": title, 
-            "done": False, 
-            "priority": prio, 
-            "due": due, 
-            "recurrence": None,
-            "list": "Allgemein"
-        })
+        self.tasks.append({"title": title, "done": False, "priority": prio, "due": due, "recurrence": None})
         self.sort_tasks(); self.save_tasks()
         print(f"{Colors.GREEN}Task '{title}' gespeichert.{Colors.ENDC}")
     
@@ -582,9 +472,8 @@ class TodoApp:
         for i, t in enumerate(open_tasks):
             p = "!!!" if t.get('priority')==3 else (" !!" if t.get('priority')==2 else "  ")
             due = format_due_date(t.get('due'))
-            # Liste mit anzeigen
-            lst = f" [{t.get('list', 'Allgemein')}]"
-            print(f" {i+1}. {p} {t['title']} {due}{lst}")
+            rec = f" ⟳ {t.get('recurrence')}" if t.get('recurrence') else ""
+            print(f" {i+1}. {p} {t['title']} {due}{rec}")
 
 def main():
     app = TodoApp()
