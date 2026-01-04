@@ -1,5 +1,5 @@
 tasks.json
-tasks.ics
+data/
 done_log.txt
 .DS_Store
 .idea/

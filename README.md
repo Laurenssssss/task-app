@@ -32,10 +32,11 @@
 - View-Mode für Details zu einer Aufgabe wurde eingeführt
 - Listen werden jetzt Farblich in "Alle Tasks" - Modus angezeigt
 
-## Schreibt mir gerne für zukünftige Funktionen:)
-
 ## Installation und Ausführung
 1. Stelle sicher, dass **Python** installiert ist.
 2. Klone das Repository:
    ```bash
    git clone "https://github.com/Laurenssssss/task-app.git"
+   ```
+
+## Schreibt mir gerne für zukünftige Funktionen:)
