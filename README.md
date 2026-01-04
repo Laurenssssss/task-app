@@ -1,5 +1,9 @@
 # Task-App für das Terminal auf MacOS #
-![Vorschau der Task App](Task-Foto.png)
+![Vorschau der Task App](Task-Uebersicht.png)
+![Vorschau der Task App](Andere-Liste.png)
+![Vorschau der Task App](Listen-Auswahl.png)
+![Vorschau der Task App](Alle-Listen.png)
+
 
 ## Features
 - Erstellen neuer Aufgaben
@@ -7,9 +11,21 @@
 - Übersichtliche Konsolenausgabe
 - Timer integriert für Konzentriertes Arbeiten (Fokusmodus)
 - Funktion für den Export zum Kalender hinzugefügt
+- Man kann mehrere Listen erstellen und sich alle Aufgaben gleichzeitig ansehen
+- Aufgaben können für einen bestimmtes Datum geplant werden
+- Es können Aufgaben mit Wiederholung erstellt werden
 
-## Geplante Features
-- Umgebung für mehrere Listen
+## Bugfixxes
+### Listen
+- Navigation ist jetzt natürlicher
+- Werden in seperaten Dateien mit NAME.json gespeichert
+
+### Anzeige
+- Fehler, dass die Task nicht komplett angezeigt wurde ist repariert
+- View-Mode für Details zu einer Aufgabe wurde eingeführt
+- Listen werden jetzt Farblich in "Alle Tasks" - Modus angezeigt
+
+## Schreibt mir gerne für zukünftige Funktionen:)
 
 ## Installation und Ausführung
 1. Stelle sicher, dass **Python** installiert ist.
