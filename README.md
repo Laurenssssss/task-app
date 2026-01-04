@@ -1,9 +1,16 @@
-# Task-App für das Terminal auf MacOS #
-![Task Übersicht](Bilder/Task-Uebersicht.png)
-![Andere Liste (Ansicht)](Bilder/Andere-Liste.png)
-![Listen Auswahl](Bilder/Listen-Auswahl.png)
-![Alle Aufgaben in der Übersicht](Bilder/Alle-Aufgaben.png)
+# Task-App für das Terminal auf MacOS
 
+## Screenshots der Anwendung
+
+<p align="center">
+  <img src="Bilder/Task-Uebersicht.png" width="48%" alt="Task Übersicht" />
+  <img src="Bilder/Andere-Liste.png" width="48%" alt="Andere Liste" />
+</p>
+
+<p align="center">
+  <img src="Bilder/Listen-Auswahl.png" width="48%" alt="Listen Auswahl" />
+  <img src="Bilder/Alle-Aufgaben.png" width="48%" alt="Alle Aufgaben" />
+</p>
 
 ## Features
 - Erstellen neuer Aufgaben
