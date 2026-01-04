@@ -1,8 +1,8 @@
 # Task-App für das Terminal auf MacOS #
-![Vorschau der Task App](Task-Uebersicht.png)
-![Vorschau der Task App](Andere-Liste.png)
-![Vorschau der Task App](Listen-Auswahl.png)
-![Vorschau der Task App](Alle-Listen.png)
+![Vorschau der Task App](/Vorschau_der_App/Task-Uebersicht.png)
+![Vorschau der Task App](/Vorschau_der_App/Andere-Liste.png)
+![Vorschau der Task App](/Vorschau_der_App/Listen-Auswahl.png)
+![Vorschau der Task App](/Vorschau_der_App/Alle-Listen.png)
 
 
 ## Features
