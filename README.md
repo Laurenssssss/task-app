@@ -31,6 +31,8 @@
 - Fehler, dass die Task nicht komplett angezeigt wurde ist repariert
 - View-Mode für Details zu einer Aufgabe wurde eingeführt
 - Listen werden jetzt Farblich in "Alle Tasks" - Modus angezeigt
+- UI-fix
+- Beim Starten sieht man jetzt Standartmäßig alle Aufgaben von allen Listen
 
 ## Installation und Ausführung
 1. Stelle sicher, dass **Python** installiert ist.

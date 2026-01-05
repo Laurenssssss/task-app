@@ -8,6 +8,7 @@ import uuid
 import glob
 import shutil
 import textwrap
+import re
 from datetime import datetime, date, timedelta
 
 # Auf Unix-Systemen brauchen wir select für den Timer
@@ -34,7 +35,6 @@ def enable_windows_ansi_support():
             pass
 
 class Colors:
-    # Standard Farben
     HEADER = '\033[95m'
     BLUE = '\033[94m'
     GREEN = '\033[92m'
@@ -46,12 +46,11 @@ class Colors:
     REVERSE = '\033[7m' 
     GREY = '\033[90m'
     
-    # Erweiterte Palette für Listen
     CYAN = '\033[96m'
     MAGENTA = '\033[95m'
     YELLOW = '\033[93m'
     WHITE = '\033[97m'
-    RED = '\033[91m'     # Hellrot
+    RED = '\033[91m'
     
     ALT_SCREEN_ENTER = '\033[?1049h'
     ALT_SCREEN_EXIT  = '\033[?1049l'
@@ -59,6 +58,10 @@ class Colors:
     SHOW_CURSOR      = '\033[?25h'
 
 # --- HELPER FUNCTIONS ---
+
+def strip_ansi(text):
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
 
 def parse_german_date(date_str):
     if not date_str: return None
@@ -184,8 +187,8 @@ class AppWindow:
 class TodoApp:
     def __init__(self):
         self.input = InputHandler()
-        self.current_list_name = "tasks" 
-        self.virtual_all_mode = False
+        self.current_list_name = "ALLE" 
+        self.virtual_all_mode = True
 
         old_file = os.path.join(BASE_DIR, "tasks.json")
         new_file = os.path.join(DATA_DIR, "tasks.json")
@@ -317,29 +320,12 @@ class TodoApp:
         if os.name == 'nt': os.system('cls')
         else: sys.stdout.write('\033[2J\033[H')
 
-    # --- UI & FARB LOGIK ---
-    
     def get_current_color_map(self):
-        # 1. Sammle alle Listen, die in der aktuellen Ansicht vorkommen
         unique_origins = sorted(list(set(t.get('_origin', 'tasks') for t in self.tasks)))
-        
-        # 2. Definiere eine Palette mit möglichst unterschiedlichen Farben
-        palette = [
-            Colors.CYAN,
-            Colors.MAGENTA,
-            Colors.YELLOW,
-            Colors.BLUE,
-            Colors.GREEN,
-            Colors.RED,
-            Colors.WHITE,
-            Colors.GREY
-        ]
-        
-        # 3. Weise jeder vorhandenen Liste nacheinander eine Farbe zu
+        palette = [Colors.CYAN, Colors.MAGENTA, Colors.YELLOW, Colors.BLUE, Colors.GREEN, Colors.RED, Colors.WHITE, Colors.GREY]
         mapping = {}
         for i, name in enumerate(unique_origins):
             mapping[name] = palette[i % len(palette)]
-            
         return mapping
 
     def draw_ui(self):
@@ -348,6 +334,12 @@ class TodoApp:
             term_width = shutil.get_terminal_size((80, 24)).columns
         except:
             term_width = 80
+        
+        # --- KOMPAKTHEIT ---
+        # Wir begrenzen die Breite auf 90 Zeichen, um es kompakt zu halten.
+        # Wenn das Terminal kleiner ist, nehmen wir die Terminalbreite.
+        MAX_COMPACT_WIDTH = 90
+        render_width = min(term_width, MAX_COMPACT_WIDTH)
 
         if self.virtual_all_mode:
             list_display = "ALLE AUFGABEN"
@@ -356,17 +348,17 @@ class TodoApp:
             list_display = f"LISTE: {self.current_list_name.upper()}"
             header_col = Colors.BLUE
 
-        padding = term_width - len(list_display) - 4
+        padding = render_width - len(list_display) - 4
         if padding < 0: padding = 0
         left_pad = padding // 2
         right_pad = padding - left_pad
 
-        print(f"{Colors.BLUE}╔{'═'*(term_width-2)}╗{Colors.ENDC}")
+        print(f"{Colors.BLUE}╔{'═'*(render_width-2)}╗{Colors.ENDC}")
         print(f"{Colors.BLUE}║{' '*left_pad}{Colors.BOLD}{header_col}{list_display}{Colors.ENDC}{Colors.BLUE}{' '*right_pad}║{Colors.ENDC}")
-        print(f"{Colors.BLUE}╚{'═'*(term_width-2)}╝{Colors.ENDC}")
+        print(f"{Colors.BLUE}╚{'═'*(render_width-2)}╝{Colors.ENDC}")
         
         percent, done_count = self.get_progress()
-        bar_len = min(30, term_width - 20)
+        bar_len = min(30, render_width - 20)
         filled = int(bar_len * percent)
         bar = '█' * filled + '░' * (bar_len - filled)
         col = Colors.FAIL if percent < 0.5 else Colors.GREEN
@@ -374,7 +366,6 @@ class TodoApp:
 
         print(f"\n{Colors.UNDERLINE}Deine Aufgaben:{Colors.ENDC}\n")
 
-        # Generiere Farben für diese Render-Runde
         color_map = self.get_current_color_map()
 
         if not self.tasks:
@@ -383,43 +374,78 @@ class TodoApp:
             for i, task in enumerate(self.tasks):
                 is_selected = (i == self.selected_idx)
                 
+                # --- LINKER BLOCK (Prefix, Checkbox, Prio) ---
+                # ">> [ ] !!! " -> ca 11 Zeichen
                 checkbox = f"{Colors.GREEN}[✔]{Colors.ENDC}" if task['done'] else f"{Colors.FAIL}[ ]{Colors.ENDC}"
                 p = task.get('priority', 1)
                 p_str = f"{Colors.FAIL}!!!{Colors.ENDC}" if p==3 else (f"{Colors.WARNING} !!{Colors.ENDC}" if p==2 else "   ")
                 prefix = f"{Colors.BLUE}>>{Colors.ENDC}" if is_selected else "  "
                 l_col = Colors.REVERSE if is_selected else ""
-                due_str = format_due_date(task.get('due'))
                 
-                rec = task.get('recurrence')
-                rec_str = f"{Colors.BLUE} ⟳ {rec}{Colors.ENDC}" if rec else ""
-                
+                # --- RECHTER BLOCK (Meta-Daten) ---
                 origin_str = ""
+                origin_len = 0
                 if self.virtual_all_mode:
                     origin = task.get('_origin', '?')
-                    # HIER: Farbe aus Map holen
                     o_col = color_map.get(origin, Colors.GREY)
                     origin_str = f" {o_col}[{origin}]{Colors.ENDC}"
+                    origin_len = len(origin) + 3 # Leerzeichen + []
 
-                meta_width = 3 + 4 + 4 + 15 + 8 + (len(origin_str) - 9) 
-                available_for_title = term_width - meta_width - 5 
+                rec = task.get('recurrence')
+                rec_str = ""
+                rec_len = 0
+                if rec:
+                    rec_str = f"{Colors.BLUE} ⟳ {rec}{Colors.ENDC}"
+                    rec_len = len(rec) + 3 # Leerzeichen + Symbol + Text
+
+                due_colored = format_due_date(task.get('due'))
+                due_clean = strip_ansi(due_colored)
                 
-                if available_for_title < 10: available_for_title = 10
+                # Fixe Breite fürs Datum
+                TARGET_DUE_WIDTH = 14
+                padding_needed = max(0, TARGET_DUE_WIDTH - len(due_clean))
+                due_final_str = (" " * padding_needed) + due_colored
+                
+                # Länge des rechten Blocks (ohne ANSI)
+                right_block_visual_len = TARGET_DUE_WIDTH + rec_len + origin_len
+                
+                # --- LAYOUT BERECHNUNG ---
+                left_block_len = 11 
+                
+                # Verfügbarer Platz für Titel & Füller
+                # -4 ist ein Sicherheitsabstand, damit kein Umbruch passiert
+                avail_space = render_width - left_block_len - right_block_visual_len - 4
+                if avail_space < 10: avail_space = 10 
 
                 title = task['title']
-                if is_selected:
-                    max_len = available_for_title + 20 
-                    if len(title) > max_len: 
-                        display_title = title[:max_len-3] + "..."
-                    else:
-                        display_title = title
-                else:
-                    max_len = 30 if self.virtual_all_mode else 40
-                    if len(title) > max_len: display_title = title[:max_len-3] + "..."
-                    else: display_title = f"{title:<{max_len}}"
-                
-                print(f"{prefix} {checkbox} {l_col} {p_str} {display_title} {due_str}{rec_str}{origin_str} {Colors.ENDC}")
+                wrapped_lines = textwrap.wrap(title, width=avail_space)
+                if not wrapped_lines: wrapped_lines = [""]
 
-        print("\n" + "-" * (term_width-2))
+                # Erste Zeile
+                line1_txt = wrapped_lines[0]
+                
+                # Füller mit Punkten (Leader dots)
+                gap_len = avail_space - len(line1_txt)
+                if gap_len < 0: gap_len = 0
+                
+                filler = f"{Colors.GREY}{'.' * (gap_len + 1)}{Colors.ENDC}"
+
+                print(f"{prefix} {checkbox} {l_col} {p_str} {line1_txt} {filler} {due_final_str}{rec_str}{origin_str} {Colors.ENDC}")
+                
+                # Weitere Zeilen (werden eingerückt)
+                if len(wrapped_lines) > 1:
+                    for extra_line in wrapped_lines[1:]:
+                        pad_left = "           " # 11 Spaces
+                        if is_selected:
+                             # Füllen, damit der Balken gut aussieht, aber nur bis render_width
+                             remaining = render_width - len(pad_left) - len(extra_line) - 2
+                             filler_right = " " * max(0, remaining)
+                             print(f"{pad_left} {l_col} {extra_line}{filler_right}{Colors.ENDC}")
+                        else:
+                             print(f"{pad_left} {extra_line}")
+
+        # Linie unten auch an render_width anpassen
+        print("\n" + "-" * (render_width-2))
         print(f"{Colors.BOLD}Steuerung:{Colors.ENDC} [↑/↓] Nav | [Space] Check | [V]iew (Details)")
         print(f"           [A]dd | [E]dit | [D]el | [L]isten | [F]ocus")
 
@@ -429,21 +455,22 @@ class TodoApp:
         
         self.clear_screen()
         term_width = shutil.get_terminal_size((80, 24)).columns
+        # Auch hier begrenzen
+        render_width = min(term_width, 90)
         
         print("\n" * 2)
-        print(f"{Colors.BLUE}╔{'═'*(term_width-2)}╗{Colors.ENDC}")
-        title_lines = textwrap.wrap(task['title'], width=term_width-6)
+        print(f"{Colors.BLUE}╔{'═'*(render_width-2)}╗{Colors.ENDC}")
+        title_lines = textwrap.wrap(task['title'], width=render_width-6)
         
         for line in title_lines:
-            print(f"{Colors.BLUE}║  {Colors.BOLD}{line.center(term_width-6)}{Colors.ENDC}  {Colors.BLUE}║{Colors.ENDC}")
+            print(f"{Colors.BLUE}║  {Colors.BOLD}{line.center(render_width-6)}{Colors.ENDC}  {Colors.BLUE}║{Colors.ENDC}")
         
-        print(f"{Colors.BLUE}╠{'═'*(term_width-2)}╣{Colors.ENDC}")
+        print(f"{Colors.BLUE}╠{'═'*(render_width-2)}╣{Colors.ENDC}")
         
         status = "ERLEDIGT" if task['done'] else "OFFEN"
         s_col = Colors.GREEN if task['done'] else Colors.FAIL
         
         origin = task.get('_origin', self.current_list_name)
-        # Farbe auch hier korrekt anzeigen
         color_map = self.get_current_color_map()
         o_col = color_map.get(origin, Colors.GREY)
         
@@ -459,9 +486,9 @@ class TodoApp:
         ]
         
         for det in details:
-            print(f"{Colors.BLUE}║  {det:<{term_width+13}}  {Colors.BLUE}║{Colors.ENDC}") 
+            print(f"{Colors.BLUE}║  {det:<{render_width+13}}  {Colors.BLUE}║{Colors.ENDC}") 
             
-        print(f"{Colors.BLUE}╚{'═'*(term_width-2)}╝{Colors.ENDC}")
+        print(f"{Colors.BLUE}╚{'═'*(render_width-2)}╝{Colors.ENDC}")
         
         print(f"\n{Colors.GREY}Drücke eine beliebige Taste zum Zurückkehren...{Colors.ENDC}")
         self.input.get_key()
