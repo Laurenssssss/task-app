@@ -22,6 +22,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 LOG_FILE = os.path.join(BASE_DIR, "done_log.txt")
 ICAL_FILE = os.path.join(BASE_DIR, "tasks.ics")
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
@@ -187,8 +188,10 @@ class AppWindow:
 class TodoApp:
     def __init__(self):
         self.input = InputHandler()
-        self.current_list_name = "ALLE" 
-        self.virtual_all_mode = True
+        
+        self.start_list_name = self._load_default_list()
+        self.current_list_name = self.start_list_name
+        self.virtual_all_mode = (self.current_list_name == "ALLE")
 
         old_file = os.path.join(BASE_DIR, "tasks.json")
         new_file = os.path.join(DATA_DIR, "tasks.json")
@@ -200,6 +203,22 @@ class TodoApp:
         self.last_deleted = None
         self.selected_idx = 0
         self.sort_tasks()
+
+    def _load_default_list(self):
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    data = json.load(f)
+                    return data.get("default_list", "ALLE")
+            except: pass
+        return "ALLE"
+
+    def _save_default_list(self, name):
+        try:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump({"default_list": name}, f)
+            self.start_list_name = name
+        except: pass
 
     def get_list_file_path(self, name):
         safe_name = "".join([c for c in name if c.isalnum() or c in (' ', '-', '_')]).strip()
@@ -215,6 +234,9 @@ class TodoApp:
                     if 'priority' not in task: task['priority'] = 1
                     if 'due' not in task: task['due'] = None
                     if 'recurrence' not in task: task['recurrence'] = None
+                    # Neue Eigenschaft: recurrence_until
+                    if 'recurrence_until' not in task: task['recurrence_until'] = None
+                    
                     d = task.get('due')
                     if d and isinstance(d, str) and '.' in d:
                         clean = parse_german_date(d)
@@ -229,6 +251,7 @@ class TodoApp:
             files = glob.glob(os.path.join(DATA_DIR, "*.json"))
             for fpath in files:
                 lname = os.path.splitext(os.path.basename(fpath))[0]
+                if lname == "config": continue 
                 tasks = self._read_file(fpath)
                 for t in tasks:
                     t['_origin'] = lname
@@ -244,6 +267,7 @@ class TodoApp:
             files = glob.glob(os.path.join(DATA_DIR, "*.json"))
             for fpath in files:
                 lname = os.path.splitext(os.path.basename(fpath))[0]
+                if lname == "config": continue
                 tasks_by_origin[lname] = []
 
             for task in self.tasks:
@@ -267,6 +291,7 @@ class TodoApp:
     def get_all_lists(self):
         files = glob.glob(os.path.join(DATA_DIR, "*.json"))
         names = [os.path.splitext(os.path.basename(f))[0] for f in files]
+        if "config" in names: names.remove("config") 
         if "tasks" not in names: names.insert(0, "tasks")
         names = sorted(list(set(names)))
         if "tasks" in names:
@@ -335,9 +360,6 @@ class TodoApp:
         except:
             term_width = 80
         
-        # --- KOMPAKTHEIT ---
-        # Wir begrenzen die Breite auf 90 Zeichen, um es kompakt zu halten.
-        # Wenn das Terminal kleiner ist, nehmen wir die Terminalbreite.
         MAX_COMPACT_WIDTH = 90
         render_width = min(term_width, MAX_COMPACT_WIDTH)
 
@@ -367,6 +389,8 @@ class TodoApp:
         print(f"\n{Colors.UNDERLINE}Deine Aufgaben:{Colors.ENDC}\n")
 
         color_map = self.get_current_color_map()
+        
+        printed_done_header = False
 
         if not self.tasks:
             print(f"  {Colors.WARNING}(Liste ist leer){Colors.ENDC}")
@@ -374,46 +398,56 @@ class TodoApp:
             for i, task in enumerate(self.tasks):
                 is_selected = (i == self.selected_idx)
                 
-                # --- LINKER BLOCK (Prefix, Checkbox, Prio) ---
-                # ">> [ ] !!! " -> ca 11 Zeichen
+                # --- TRENNLINIE ---
+                if task['done'] and not printed_done_header:
+                    sep_line = "─" * (render_width - 15)
+                    print(f"\n   {Colors.GREY}{'─'*5} ERLEDIGT {sep_line}{Colors.ENDC}")
+                    printed_done_header = True
+
+                # --- LINKS ---
                 checkbox = f"{Colors.GREEN}[✔]{Colors.ENDC}" if task['done'] else f"{Colors.FAIL}[ ]{Colors.ENDC}"
-                p = task.get('priority', 1)
-                p_str = f"{Colors.FAIL}!!!{Colors.ENDC}" if p==3 else (f"{Colors.WARNING} !!{Colors.ENDC}" if p==2 else "   ")
+                
+                if task['done']:
+                    p_str = "   "
+                else:
+                    p = task.get('priority', 1)
+                    p_str = f"{Colors.FAIL}!!!{Colors.ENDC}" if p==3 else (f"{Colors.WARNING} !!{Colors.ENDC}" if p==2 else "   ")
+                
                 prefix = f"{Colors.BLUE}>>{Colors.ENDC}" if is_selected else "  "
                 l_col = Colors.REVERSE if is_selected else ""
                 
-                # --- RECHTER BLOCK (Meta-Daten) ---
+                # --- RECHTS ---
                 origin_str = ""
                 origin_len = 0
                 if self.virtual_all_mode:
                     origin = task.get('_origin', '?')
                     o_col = color_map.get(origin, Colors.GREY)
+                    if task['done']: o_col = Colors.GREY
                     origin_str = f" {o_col}[{origin}]{Colors.ENDC}"
-                    origin_len = len(origin) + 3 # Leerzeichen + []
+                    origin_len = len(origin) + 3 
 
                 rec = task.get('recurrence')
                 rec_str = ""
                 rec_len = 0
                 if rec:
-                    rec_str = f"{Colors.BLUE} ⟳ {rec}{Colors.ENDC}"
-                    rec_len = len(rec) + 3 # Leerzeichen + Symbol + Text
+                    col_rec = Colors.GREY if task['done'] else Colors.BLUE
+                    rec_str = f"{col_rec} ⟳ {rec}{Colors.ENDC}"
+                    rec_len = len(rec) + 3 
 
-                due_colored = format_due_date(task.get('due'))
-                due_clean = strip_ansi(due_colored)
+                # --- DATUM ---
+                if task['done']:
+                    due_final_str = " " * 14
+                else:
+                    due_colored = format_due_date(task.get('due'))
+                    due_clean = strip_ansi(due_colored)
+                    TARGET_DUE_WIDTH = 14
+                    padding_needed = max(0, TARGET_DUE_WIDTH - len(due_clean))
+                    due_final_str = (" " * padding_needed) + due_colored
                 
-                # Fixe Breite fürs Datum
-                TARGET_DUE_WIDTH = 14
-                padding_needed = max(0, TARGET_DUE_WIDTH - len(due_clean))
-                due_final_str = (" " * padding_needed) + due_colored
+                right_block_visual_len = 14 + rec_len + origin_len
                 
-                # Länge des rechten Blocks (ohne ANSI)
-                right_block_visual_len = TARGET_DUE_WIDTH + rec_len + origin_len
-                
-                # --- LAYOUT BERECHNUNG ---
+                # --- TITEL ---
                 left_block_len = 11 
-                
-                # Verfügbarer Platz für Titel & Füller
-                # -4 ist ein Sicherheitsabstand, damit kein Umbruch passiert
                 avail_space = render_width - left_block_len - right_block_visual_len - 4
                 if avail_space < 10: avail_space = 10 
 
@@ -423,28 +457,33 @@ class TodoApp:
 
                 # Erste Zeile
                 line1_txt = wrapped_lines[0]
-                
-                # Füller mit Punkten (Leader dots)
-                gap_len = avail_space - len(line1_txt)
+                if task['done']:
+                    line1_txt = f"{Colors.GREY}{strip_ansi(line1_txt)}{Colors.ENDC}"
+
+                # Füller
+                gap_len = avail_space - len(strip_ansi(line1_txt))
                 if gap_len < 0: gap_len = 0
                 
-                filler = f"{Colors.GREY}{'.' * (gap_len + 1)}{Colors.ENDC}"
+                if task['done']:
+                    filler = " " * (gap_len + 1)
+                else:
+                    filler = f"{Colors.GREY}{'.' * (gap_len + 1)}{Colors.ENDC}"
 
                 print(f"{prefix} {checkbox} {l_col} {p_str} {line1_txt} {filler} {due_final_str}{rec_str}{origin_str} {Colors.ENDC}")
                 
-                # Weitere Zeilen (werden eingerückt)
                 if len(wrapped_lines) > 1:
                     for extra_line in wrapped_lines[1:]:
-                        pad_left = "           " # 11 Spaces
+                        pad_left = "           "
+                        if task['done']: 
+                            extra_line = f"{Colors.GREY}{strip_ansi(extra_line)}{Colors.ENDC}"
+                            
                         if is_selected:
-                             # Füllen, damit der Balken gut aussieht, aber nur bis render_width
-                             remaining = render_width - len(pad_left) - len(extra_line) - 2
+                             remaining = render_width - len(pad_left) - len(strip_ansi(extra_line)) - 2
                              filler_right = " " * max(0, remaining)
                              print(f"{pad_left} {l_col} {extra_line}{filler_right}{Colors.ENDC}")
                         else:
                              print(f"{pad_left} {extra_line}")
 
-        # Linie unten auch an render_width anpassen
         print("\n" + "-" * (render_width-2))
         print(f"{Colors.BOLD}Steuerung:{Colors.ENDC} [↑/↓] Nav | [Space] Check | [V]iew (Details)")
         print(f"           [A]dd | [E]dit | [D]el | [L]isten | [F]ocus")
@@ -455,7 +494,6 @@ class TodoApp:
         
         self.clear_screen()
         term_width = shutil.get_terminal_size((80, 24)).columns
-        # Auch hier begrenzen
         render_width = min(term_width, 90)
         
         print("\n" * 2)
@@ -477,12 +515,16 @@ class TodoApp:
         prio_map = {1: "Normal", 2: "Hoch", 3: "Kritisch"}
         prio = prio_map.get(task.get('priority', 1), "Normal")
         
+        rec_until = task.get('recurrence_until', 'Unendlich')
+        if not rec_until: rec_until = "Unendlich"
+        
         details = [
             f"Status:      {s_col}{status}{Colors.ENDC}",
             f"Fällig am:   {task.get('due', 'Kein Datum')}",
             f"Liste:       {o_col}{origin}{Colors.ENDC}",
             f"Priorität:   {prio}",
-            f"Wiederholung: {task.get('recurrence', '-')}"
+            f"Wiederholung: {task.get('recurrence', '-')}",
+            f"Wdh. bis:    {rec_until}"
         ]
         
         for det in details:
@@ -547,16 +589,23 @@ class TodoApp:
             due = parse_german_date(self._prompt("Fällig (DD.MM oder DD.MM.YYYY) [Enter=Nie]:"))
             rec_in = self._prompt("Wiederholung (z.B. '1d', '3d', '1w') [Enter=Nein]:").lower()
             recurrence = None
-            if rec_in and (rec_in.endswith('d') or rec_in.endswith('w')):
-                recurrence = rec_in
-            elif rec_in == 't': recurrence = '1d'
+            recurrence_until = None
+            
+            if rec_in and (rec_in.endswith('d') or rec_in.endswith('w') or rec_in == 't'):
+                if rec_in == 't': recurrence = '1d'
+                else: recurrence = rec_in
+                
+                # Wenn Wiederholung aktiv, frage nach Ende
+                rec_until_in = self._prompt("Wiederholen bis (Datum) [Enter=Unendlich]:")
+                recurrence_until = parse_german_date(rec_until_in)
             
             new_task = {
                 "title": title, 
                 "done": False, 
                 "priority": 1, 
                 "due": due,
-                "recurrence": recurrence
+                "recurrence": recurrence,
+                "recurrence_until": recurrence_until
             }
             if self.virtual_all_mode:
                 new_task['_origin'] = "tasks"
@@ -610,13 +659,18 @@ class TodoApp:
                 
                 for i, item in enumerate(menu_items):
                     display_name = f"[ {item} ]" if item == "ALLE" else item
+                    
+                    is_default = (item == self.start_list_name)
+                    def_marker = f"{Colors.YELLOW}[Standard]{Colors.ENDC}" if is_default else ""
+
                     prefix = f"{Colors.BLUE}>>{Colors.ENDC}" if i == sel_idx else "  "
                     style = Colors.REVERSE if i == sel_idx else ""
                     mark = "*" if (item == self.current_list_name) else " "
-                    print(f" {prefix} {style} {mark} {display_name:<35} {Colors.ENDC}")
+                    
+                    print(f" {prefix} {style} {mark} {display_name:<25} {Colors.ENDC} {def_marker}")
 
                 print("\n" + "-" * 50)
-                print(f" [Enter] Öffnen | [N]eu | [Esc] Abbrechen")
+                print(f" [Enter] Öffnen | [N]eu | [S] Als Start setzen | [Esc] Abbrechen")
                 
                 key = self.input.get_key()
                 if key in ('up', 'k'): sel_idx = max(0, sel_idx - 1)
@@ -631,6 +685,13 @@ class TodoApp:
                             self.save_tasks()
                             return
                     break
+                elif key == 's':
+                    new_def = menu_items[sel_idx]
+                    self._save_default_list(new_def)
+                    sys.stdout.write(Colors.SHOW_CURSOR)
+                    print(f"\n  {Colors.GREEN}'{new_def}' ist nun die Start-Liste!{Colors.ENDC}")
+                    time.sleep(1.0)
+                    sys.stdout.write(Colors.HIDE_CURSOR)
                 elif key in ('\r', '\n', ' '):
                     self.current_list_name = menu_items[sel_idx]
                     self.tasks = self.load_current_context()
@@ -651,18 +712,35 @@ class TodoApp:
                 elif key in (' ', 't') and self.tasks:
                     task = self.tasks[self.selected_idx]
                     task['done'] = not task['done']
+                    
+                    # LOGIK FÜR WIEDERHOLENDE AUFGABEN
                     if task['done'] and task.get('recurrence') and task.get('due'):
                         new_due = calculate_next_date(task['due'], task['recurrence'])
                         if new_due:
-                            new_task = task.copy()
-                            new_task['done'] = False
-                            new_task['due'] = new_due
-                            if '_origin' in task: new_task['_origin'] = task['_origin']
-                            self.tasks.append(new_task)
-                            sys.stdout.write(Colors.SHOW_CURSOR)
-                            print(f"\n  {Colors.GREEN}Neue Aufgabe für {new_due} erstellt!{Colors.ENDC}")
-                            time.sleep(0.8)
-                            sys.stdout.write(Colors.HIDE_CURSOR)
+                            # Prüfen ob End-Datum überschritten
+                            create_new = True
+                            limit = task.get('recurrence_until')
+                            if limit:
+                                # String Vergleich yyyy-mm-dd funktioniert korrekt
+                                if new_due > limit:
+                                    create_new = False
+                            
+                            if create_new:
+                                new_task = task.copy()
+                                new_task['done'] = False
+                                new_task['due'] = new_due
+                                if '_origin' in task: new_task['_origin'] = task['_origin']
+                                self.tasks.append(new_task)
+                                sys.stdout.write(Colors.SHOW_CURSOR)
+                                print(f"\n  {Colors.GREEN}Neue Aufgabe für {new_due} erstellt!{Colors.ENDC}")
+                                time.sleep(0.8)
+                                sys.stdout.write(Colors.HIDE_CURSOR)
+                            else:
+                                sys.stdout.write(Colors.SHOW_CURSOR)
+                                print(f"\n  {Colors.YELLOW}Wiederholung beendet (Datum überschritten).{Colors.ENDC}")
+                                time.sleep(1.5)
+                                sys.stdout.write(Colors.HIDE_CURSOR)
+                                
                     self.sort_tasks(); self.save_tasks()
                 elif key in ('1', '2', '3') and self.tasks:
                     self.tasks[self.selected_idx]['priority'] = int(key)
@@ -682,7 +760,7 @@ class TodoApp:
         due = parse_german_date(due_input)
         fpath = self.get_list_file_path("tasks")
         tasks = self._read_file(fpath)
-        tasks.append({"title": title, "done": False, "priority": prio, "due": due, "recurrence": None})
+        tasks.append({"title": title, "done": False, "priority": prio, "due": due, "recurrence": None, "recurrence_until": None})
         self._write_file(fpath, tasks)
         print(f"{Colors.GREEN}Task '{title}' in 'tasks' gespeichert.{Colors.ENDC}")
     

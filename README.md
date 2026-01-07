@@ -21,6 +21,7 @@
 - Man kann mehrere Listen erstellen und sich alle Aufgaben gleichzeitig ansehen
 - Aufgaben können für einen bestimmtes Datum geplant werden
 - Es können Aufgaben mit Wiederholung erstellt werden
+- Man kann jetzt bei der Erstellung, von sich zu wiederholenden Aufgaben, ein Enddatum festlegen
 
 ## Bugfixxes
 ### Listen
@@ -33,6 +34,8 @@
 - Listen werden jetzt Farblich in "Alle Tasks" - Modus angezeigt
 - UI-fix
 - Beim Starten sieht man jetzt Standartmäßig alle Aufgaben von allen Listen
+- Die Anzeige der Abgearbeiteten Aufgaben wurde übersichtlicher gestaltet
+- Man kann nun die Liste einstellen, welche beim Starten geöffnet wird (Anpassbar)
 
 ## Installation und Ausführung
 1. Stelle sicher, dass **Python** installiert ist.
