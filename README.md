@@ -44,4 +44,7 @@
    git clone "https://github.com/Laurenssssss/task-app.git"
    ```
 
-## Schreibt mir gerne für zukünftige Funktionen:)
+## Future
+- Besser Ansicht für zukünftige Tasks
+- Abgehakte Aufgaben besser darstellen
+- Uhrzeit für Aufgaben hinzufügen
